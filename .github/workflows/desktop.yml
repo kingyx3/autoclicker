@@ -21,7 +21,7 @@ jobs:
           python-version: '3.12'
       - name: Install Tk on Linux
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y python3-tk
+        run: sudo apt-get update && sudo apt-get install -y python3-tk xvfb xauth
       - run: python -m pip install -r desktop/requirements.txt pyinstaller
       - name: Test model and cancellation
         run: python -m unittest discover -s desktop/tests -v
@@ -29,6 +29,15 @@ jobs:
           PYTHONPATH: desktop
       - name: Build desktop executable
         run: python -m PyInstaller --noconfirm --clean --onefile --windowed --collect-submodules pynput --name AutoClicker desktop/main.py
+      - name: Smoke launch Linux GUI under Xvfb
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set +e
+          timeout 8s xvfb-run -a ./dist/AutoClicker
+          status=$?
+          set -e
+          test "$status" -eq 124
       - name: Package Windows executable
         if: runner.os == 'Windows'
         shell: pwsh
