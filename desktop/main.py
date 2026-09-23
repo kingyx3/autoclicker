@@ -30,13 +30,22 @@ class App:
         self.steps: list[Step] = []
         self.name = tk.StringVar()
         self.repetitions = tk.StringVar(value="1")
+        self.loop = tk.BooleanVar(value=True)
+        self.time_limit = tk.StringVar(value="0")
+        self.timer = tk.StringVar(value="Elapsed 00:00.0")
+        self.timer_phase = "idle"
+        self.countdown_remaining = 3
+        self.run_id = 0
+        self.active_limit = 0
+        self.controls: tk.Toplevel | None = None
+        self.controls_pause: ttk.Button | None = None
         self.x = tk.StringVar(value="0")
         self.y = tk.StringVar(value="0")
         self.radius = tk.StringVar(value="24")
         self.hold = tk.StringVar(value="0")
         self.wait = tk.StringVar(value="100")
         self.button = tk.StringVar(value="left")
-        self.status = tk.StringVar(value="Ready · F8 captures cursor · F9 stops")
+        self.status = tk.StringVar(value="Ready · F8 captures cursor · F9 stops · F10 pauses")
         self.show_markers = tk.BooleanVar(value=True)
         self.edit_markers = tk.BooleanVar(value=True)
         self.selected_step: int | None = None
@@ -57,7 +66,7 @@ class App:
 
     def _build(self) -> None:
         self.root.title("AutoClicker Desktop")
-        self.root.geometry("700x710")
+        self.root.geometry("700x770")
         frame = ttk.Frame(self.root, padding=16)
         frame.pack(fill="both", expand=True)
         ttk.Label(frame, text="Saved scripts").grid(row=0, column=0, sticky="w")
@@ -67,8 +76,9 @@ class App:
         ttk.Button(frame, text="Delete", command=self._delete).grid(row=2, column=1, sticky="ew")
         ttk.Label(frame, text="Name").grid(row=3, column=0, sticky="w")
         ttk.Entry(frame, textvariable=self.name).grid(row=3, column=1, columnspan=3, sticky="ew")
-        ttk.Label(frame, text="Repetitions").grid(row=4, column=0, sticky="w")
+        ttk.Label(frame, text="Repetitions (when loop is off)").grid(row=4, column=0, sticky="w")
         ttk.Entry(frame, textvariable=self.repetitions, width=12).grid(row=4, column=1, sticky="w")
+        ttk.Checkbutton(frame, text="Loop until stopped (default)", variable=self.loop).grid(row=4, column=2, columnspan=2, sticky="w")
         ttk.Label(frame, text="Steps, in order (select a row or numbered crosshair to edit)").grid(row=5, column=0, columnspan=4, sticky="w", pady=(14, 0))
         self.step_list = tk.Listbox(frame, height=8, exportselection=False)
         self.step_list.grid(row=6, column=0, columnspan=4, sticky="nsew")
@@ -85,15 +95,20 @@ class App:
         ttk.Combobox(frame, textvariable=self.button, values=("left", "right", "middle"), state="readonly", width=12).grid(row=13, column=2, sticky="w")
         ttk.Button(frame, text="Capture cursor (F8)", command=self._capture).grid(row=14, column=0, columnspan=2, sticky="ew")
         ttk.Button(frame, text="Add step", command=self._add_step).grid(row=14, column=2, columnspan=2, sticky="ew")
-        ttk.Button(frame, text="Save script", command=self._save).grid(row=15, column=0, columnspan=2, sticky="ew", pady=(12, 0))
-        ttk.Button(frame, text="Run in 3 seconds", command=self._start).grid(row=15, column=2, sticky="ew", pady=(12, 0))
+        ttk.Button(frame, text="Save script", command=self._save).grid(row=15, column=0, sticky="ew", pady=(12, 0))
+        ttk.Button(frame, text="Start (3s countdown)", command=self._start).grid(row=15, column=1, sticky="ew", pady=(12, 0))
+        self.pause_button = ttk.Button(frame, text="Pause (F10)", command=self._toggle_pause)
+        self.pause_button.grid(row=15, column=2, sticky="ew", pady=(12, 0))
         ttk.Button(frame, text="STOP (F9)", command=self._stop).grid(row=15, column=3, sticky="ew", pady=(12, 0))
         ttk.Checkbutton(frame, text="Show numbered crosshairs", variable=self.show_markers,
                         command=self._marker_visibility).grid(row=16, column=0, columnspan=2, sticky="w")
         ttk.Checkbutton(frame, text="Select crosshairs on screen", variable=self.edit_markers,
                         command=self._marker_mode).grid(row=16, column=2, columnspan=2, sticky="w")
-        ttk.Label(frame, textvariable=self.status, wraplength=650).grid(row=17, column=0, columnspan=4, sticky="w", pady=(12, 0))
-        ttk.Label(frame, text="Drag a numbered crosshair to move its click position, then save the script. Radius is visual; clicks go to the center pixel. Turn off selection to use other apps. F9 stops playback.", wraplength=650).grid(row=18, column=0, columnspan=4, sticky="w")
+        ttk.Label(frame, text="Run timer seconds (0 = unlimited)").grid(row=17, column=0, columnspan=2, sticky="w", pady=(8, 0))
+        ttk.Entry(frame, textvariable=self.time_limit, width=12).grid(row=17, column=2, sticky="w", pady=(8, 0))
+        ttk.Label(frame, textvariable=self.timer).grid(row=18, column=0, columnspan=4, sticky="w", pady=(8, 0))
+        ttk.Label(frame, textvariable=self.status, wraplength=650).grid(row=19, column=0, columnspan=4, sticky="w", pady=(8, 0))
+        ttk.Label(frame, text="Drag a numbered crosshair to move its click position, then save the script. Radius is visual; clicks go to the center pixel. Turn off selection to use other apps. F9 stops; F10 pauses or resumes.", wraplength=650).grid(row=20, column=0, columnspan=4, sticky="w")
         frame.columnconfigure(1, weight=1)
         frame.columnconfigure(3, weight=1)
         frame.rowconfigure(6, weight=1)
@@ -188,13 +203,15 @@ class App:
         script = self.scripts[index]
         self.name.set(script.name)
         self.repetitions.set(str(script.repetitions))
+        self.loop.set(script.loop)
+        self.time_limit.set(str(script.time_limit_seconds))
         self.steps = list(script.steps)
         self.selected_step = None
         self._refresh_steps()
 
     def _save(self) -> None:
         try:
-            script = Script(self.name.get().strip(), int(self.repetitions.get()), tuple(self.steps))
+            script = self._script_from_fields()
             updated = [s for s in self.scripts if s.name != script.name] + [script]
             self.store.write(updated)
             self.scripts = updated
@@ -237,40 +254,110 @@ class App:
         self.y.set(str(y))
         self.status.set(f"Captured ({x}, {y})")
 
+    def _script_from_fields(self) -> Script:
+        return Script(self.name.get().strip(), int(self.repetitions.get()), tuple(self.steps),
+                      loop=self.loop.get(), time_limit_seconds=int(self.time_limit.get()))
+
+    def _show_controls(self) -> None:
+        self._hide_controls()
+        controls = tk.Toplevel(self.root)
+        self.controls = controls
+        controls.title("AutoClicker playback")
+        controls.attributes("-topmost", True)
+        controls.resizable(False, False)
+        controls.geometry(f"330x98+{max(0, controls.winfo_screenwidth() - 350)}+48")
+        controls.protocol("WM_DELETE_WINDOW", self._stop)
+        content = ttk.Frame(controls, padding=10)
+        content.pack(fill="both", expand=True)
+        ttk.Label(content, textvariable=self.timer).pack(anchor="w")
+        buttons = ttk.Frame(content)
+        buttons.pack(fill="x", pady=(8, 0))
+        self.controls_pause = ttk.Button(buttons, text="Pause (F10)", command=self._toggle_pause)
+        self.controls_pause.pack(side="left", expand=True, fill="x")
+        ttk.Button(buttons, text="Stop (F9)", command=self._stop).pack(side="left", expand=True, fill="x")
+
+    def _hide_controls(self) -> None:
+        if self.controls is not None:
+            self.controls.destroy()
+            self.controls = None
+            self.controls_pause = None
+
+    @staticmethod
+    def _format_time(seconds: float) -> str:
+        tenths = max(0, int(seconds * 10))
+        minutes, remainder = divmod(tenths, 600)
+        hours, minutes = divmod(minutes, 60)
+        return (f"{hours:02}:{minutes:02}:{remainder // 10:02}.{remainder % 10}"
+                if hours else f"{minutes:02}:{remainder // 10:02}.{remainder % 10}")
+
     def _start(self) -> None:
         if self.worker and self.worker.is_alive():
             self.status.set("A script is already running")
             return
         try:
-            script = Script(self.name.get().strip(), int(self.repetitions.get()), tuple(self.steps))
+            script = self._script_from_fields()
         except ValueError as exc:
             messagebox.showerror("Invalid script", str(exc))
             return
         self.runner.reset()
+        self.run_id += 1
+        self.active_limit = script.time_limit_seconds
+        run_id = self.run_id
+        self.timer_phase = "countdown"
+        self.countdown_remaining = 3
+        self.timer.set("Starts in 3s · elapsed 00:00.0")
+        self.pause_button.configure(text="Pause (F10)")
         self.overlay.set_editable(False)
-        self.status.set("Starting in 3 seconds; move to the target window. F9 stops.")
+        self._show_controls()
+        self.status.set("Starting in 3 seconds; move to the target window. F10 pauses; F9 stops.")
+
+        def emit(kind: str, value: object) -> None:
+            self.events.put((kind, (run_id, value)))
 
         def work() -> None:
             try:
-                count = self.runner.run(script, progress=lambda n, total: self.events.put(("progress", (n, total))),
-                                        step_changed=lambda index: self.events.put(("step", index)))
-                self.events.put(("done", count))
+                count = self.runner.run(script, progress=lambda n, total: emit("progress", (n, total)),
+                                        step_changed=lambda index: emit("step", index),
+                                        countdown=lambda remaining: emit("countdown", remaining),
+                                        started=lambda: emit("started", None))
+                emit("done", (count, self.runner.outcome))
             except Exception as exc:
-                self.events.put(("error", str(exc)))
+                emit("error", str(exc))
 
         self.worker = threading.Thread(target=work, daemon=True)
         self.worker.start()
 
     def _stop(self) -> None:
+        if not self.worker or not self.worker.is_alive():
+            return
         self.runner.stop()
         self.status.set("Stopping…")
+
+    def _toggle_pause(self) -> None:
+        if not self.worker or not self.worker.is_alive():
+            return
+        if self.runner.pause_event.is_set():
+            self.runner.resume()
+            self.pause_button.configure(text="Pause (F10)")
+            if self.controls_pause:
+                self.controls_pause.configure(text="Pause (F10)")
+            self.status.set("Resumed · F10 pauses · F9 stops")
+        else:
+            self.runner.pause()
+            self.pause_button.configure(text="Resume (F10)")
+            if self.controls_pause:
+                self.controls_pause.configure(text="Resume (F10)")
+            self.status.set("Paused · F10 resumes · F9 stops")
 
     def _on_key(self, key) -> None:
         if key == self.keyboard.Key.f8:
             self.events.put(("capture", None))
         elif key == self.keyboard.Key.f9:
-            self.runner.stop()
-            self.events.put(("stopping", None))
+            if self.worker and self.worker.is_alive():
+                self.runner.stop()
+                self.events.put(("stopping", None))
+        elif key == self.keyboard.Key.f10:
+            self.events.put(("toggle_pause", None))
 
     def _poll(self) -> None:
         while not self.events.empty():
@@ -279,24 +366,52 @@ class App:
                 self._capture()
             elif kind == "stopping":
                 self.status.set("Stopping…")
+            elif kind == "toggle_pause":
+                self._toggle_pause()
+            elif value[0] != self.run_id:
+                continue
+            elif kind == "countdown":
+                self.countdown_remaining = value[1]
+            elif kind == "started":
+                self.timer_phase = "running"
             elif kind == "progress":
-                done, total = value
-                self.status.set(f"Clicked {done} / {total} · F9 stops")
+                done, total = value[1]
+                self.status.set(f"Clicked {done}" + (" · looping" if total is None else f" / {total}") +
+                                " · F10 pauses · F9 stops")
             elif kind == "step":
-                self.overlay.highlight(value)
+                self.overlay.highlight(value[1])
             elif kind == "done":
+                count, outcome = value[1]
+                self.timer_phase = "done"
+                self._hide_controls()
+                self.pause_button.configure(text="Pause (F10)")
                 self.overlay.highlight(None)
                 self.overlay.set_editable(self.edit_markers.get())
-                self.status.set(f"Finished or stopped after {value} clicks")
+                label = {"timer": "Timer ended", "stopped": "Stopped", "completed": "Finished"}[outcome]
+                self.status.set(f"{label} after {count} clicks")
             elif kind == "error":
+                self.timer_phase = "done"
+                self._hide_controls()
+                self.pause_button.configure(text="Pause (F10)")
                 self.overlay.highlight(None)
                 self.overlay.set_editable(self.edit_markers.get())
-                self.status.set(f"Input error: {value}")
+                self.status.set(f"Input error: {value[1]}")
+        if self.timer_phase == "countdown":
+            self.timer.set(f"Starts in {self.countdown_remaining}s" +
+                           (" · paused" if self.runner.pause_event.is_set() else "") +
+                           " · elapsed 00:00.0")
+        elif self.timer_phase in ("running", "done"):
+            elapsed = self.runner.elapsed()
+            limit = self.active_limit
+            self.timer.set(f"Elapsed {self._format_time(elapsed)}" +
+                           (f" · remaining {self._format_time(limit - elapsed)}" if limit else "") +
+                           (" · paused" if self.timer_phase == "running" and self.runner.pause_event.is_set() else ""))
         self.root.after(50, self._poll)
 
     def _close(self) -> None:
         self.runner.stop()
         self.listener.stop()
+        self._hide_controls()
         self.overlay.destroy()
         self.root.destroy()
 

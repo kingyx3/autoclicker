@@ -32,6 +32,11 @@ jobs:
         run: xvfb-run -a python desktop/tests/overlay_smoke.py
         env:
           PYTHONPATH: desktop
+      - name: Smoke test desktop playback panel on X11
+        if: runner.os == 'Linux'
+        run: xvfb-run -a python desktop/tests/app_smoke.py
+        env:
+          PYTHONPATH: desktop
       - name: Build desktop executable
         run: python -m PyInstaller --noconfirm --clean --onefile --windowed --collect-submodules pynput --name AutoClicker desktop/main.py
       - name: Package Windows executable
