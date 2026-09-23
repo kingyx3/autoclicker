@@ -15,6 +15,16 @@ jobs:
         with:
           gradle-version: '8.9'
       - run: gradle :app:assembleDebug
+      - name: Assert app code is packaged
+        run: |
+          python - <<'PY'
+          import zipfile
+          apk = 'app/build/outputs/apk/debug/app-debug.apk'
+          with zipfile.ZipFile(apk) as package:
+              dex = b''.join(package.read(name) for name in package.namelist() if name.endswith('.dex'))
+          assert b'Lio/github/kingyx3/autoclicker/MainActivity;' in dex
+          assert b'Lio/github/kingyx3/autoclicker/TapService;' in dex
+          PY
       - uses: actions/upload-artifact@v4
         with:
           name: autoclicker-debug-apk
