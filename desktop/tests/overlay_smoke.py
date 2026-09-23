@@ -17,6 +17,7 @@ root.update()
 assert len(overlay.windows) == 2
 assert overlay.windows[0][0].winfo_width() == 80
 overlay.windows[1][1].event_generate("<Button-1>")
+root.update()
 assert selected == [1]
 overlay.select(1)
 overlay.set_editable(False)

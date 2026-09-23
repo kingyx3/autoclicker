@@ -65,7 +65,6 @@ class MarkerOverlay:
             canvas.create_text(center, center, text=str(index + 1), fill="white",
                                font=("TkDefaultFont", 12, "bold"), tags="number")
             canvas.bind("<Button-1>", lambda _event, n=index: self.on_select(n))
-            window.bind("<Button-1>", lambda _event, n=index: self.on_select(n))
             window.deiconify()
             self.windows.append((window, canvas, index))
         self._colorize()
