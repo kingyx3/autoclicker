@@ -25,6 +25,16 @@ jobs:
           assert b'Lio/github/kingyx3/autoclicker/MainActivity;' in dex
           assert b'Lio/github/kingyx3/autoclicker/TapService;' in dex
           PY
+      - name: Exercise release signing with a throwaway CI key
+        shell: bash
+        run: |
+          keytool -genkeypair -noprompt -storetype PKCS12 -keystore "$RUNNER_TEMP/ci-test.jks" -alias ci-test -keyalg RSA -keysize 2048 -validity 1 -storepass ci-only-password -keypass ci-only-password -dname "CN=CI Test"
+          ANDROID_KEYSTORE_PATH="$RUNNER_TEMP/ci-test.jks" ANDROID_KEYSTORE_PASSWORD=ci-only-password ANDROID_KEY_ALIAS=ci-test ANDROID_KEY_PASSWORD=ci-only-password gradle :app:assembleRelease
+          APK=app/build/outputs/apk/release/app-release.apk
+          SIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
+          test -n "$SIGNER"
+          "$SIGNER" verify "$APK"
+          rm "$RUNNER_TEMP/ci-test.jks" "$APK"
       - uses: actions/upload-artifact@v4
         with:
           name: autoclicker-debug-apk
