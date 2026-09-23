@@ -26,7 +26,7 @@ In the GitHub repository's **Settings → Secrets and variables → Actions**, a
 | `ANDROID_KEY_ALIAS` | Alias, e.g. `autoclicker` |
 | `ANDROID_KEY_PASSWORD` | Key password |
 
-On macOS/Linux, generate the one-line value with `base64 < autoclicker-release.jks | tr -d '\\n'`. Do not commit the keystore, paste it into a PR, or upload it as a public artifact.
+On macOS/Linux, generate the one-line value with `base64 < autoclicker-release.jks | tr -d '\n'`. Do not commit the keystore, paste it into a PR, or upload it as a public artifact.
 
 After the PR is merged, run **Actions → Signed Android release → Run workflow** on the default branch. The workflow decodes the private keystore on the runner, builds the release APK, verifies its signature, and uploads `autoclicker-signed-release` with a SHA-256 checksum. It fails if any secret is missing. Install the signed APK on a physical Android device and check Accessibility enablement, point selection, hold and wait times, repetitions, cancellation, screen rotation, and save/load/delete before distributing it.
 
