@@ -1,0 +1,18 @@
+name: AutoClicker
+options:
+  bundleIdPrefix: io.github.kingyx3
+  deploymentTarget:
+    iOS: "16.0"
+targets:
+  AutoClicker:
+    type: application
+    platform: iOS
+    sources: [AutoClicker]
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: io.github.kingyx3.autoclicker
+        SWIFT_VERSION: 5.9
+        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_KEY_UILaunchScreen_Generation: YES
+        TARGETED_DEVICE_FAMILY: "1,2"
+        CODE_SIGN_STYLE: Automatic
