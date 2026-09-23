@@ -1,0 +1,56 @@
+name: Desktop builds
+on:
+  push:
+  pull_request:
+jobs:
+  package:
+    strategy:
+      matrix:
+        include:
+          - os: windows-latest
+            label: windows
+          - os: macos-latest
+            label: macos
+          - os: ubuntu-latest
+            label: linux-x11
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Tk on Linux
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y python3-tk xvfb xauth
+      - run: python -m pip install -r desktop/requirements.txt pyinstaller
+      - name: Test model and cancellation
+        run: python -m unittest discover -s desktop/tests -v
+        env:
+          PYTHONPATH: desktop
+      - name: Build desktop executable
+        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --collect-submodules pynput --name AutoClicker desktop/main.py
+      - name: Smoke launch Linux GUI under Xvfb
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          set +e
+          timeout 8s xvfb-run -a ./dist/AutoClicker
+          status=$?
+          set -e
+          test "$status" -eq 124
+      - name: Package Windows executable
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path dist/AutoClicker.exe -DestinationPath AutoClicker-windows.zip
+      - name: Package macOS app
+        if: runner.os == 'macOS'
+        run: ditto -c -k --sequesterRsrc --keepParent dist/AutoClicker.app AutoClicker-macos.zip
+      - name: Package Linux executable
+        if: runner.os == 'Linux'
+        run: tar -czf AutoClicker-linux-x11.tar.gz -C dist AutoClicker
+      - uses: actions/upload-artifact@v4
+        with:
+          name: autoclicker-${{ matrix.label }}
+          path: AutoClicker-*.*
+          if-no-files-found: error
+          retention-days: 30

@@ -1,0 +1,12 @@
+name: iOS build
+on:
+  push:
+  pull_request:
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: brew install xcodegen
+      - run: cd ios && xcodegen generate
+      - run: xcodebuild -project ios/AutoClicker.xcodeproj -scheme AutoClicker -sdk iphonesimulator -configuration Debug CODE_SIGNING_ALLOWED=NO build

@@ -1,0 +1,43 @@
+name: Android build
+on:
+  push:
+  pull_request:
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+      - run: gradle :app:assembleDebug
+      - name: Assert app code is packaged
+        run: |
+          python - <<'PY'
+          import zipfile
+          apk = 'app/build/outputs/apk/debug/app-debug.apk'
+          with zipfile.ZipFile(apk) as package:
+              dex = b''.join(package.read(name) for name in package.namelist() if name.endswith('.dex'))
+          assert b'Lio/github/kingyx3/autoclicker/MainActivity;' in dex
+          assert b'Lio/github/kingyx3/autoclicker/TapService;' in dex
+          PY
+      - name: Exercise release signing with a throwaway CI key
+        shell: bash
+        run: |
+          keytool -genkeypair -noprompt -storetype PKCS12 -keystore "$RUNNER_TEMP/ci-test.jks" -alias ci-test -keyalg RSA -keysize 2048 -validity 1 -storepass ci-only-password -keypass ci-only-password -dname "CN=CI Test"
+          ANDROID_KEYSTORE_PATH="$RUNNER_TEMP/ci-test.jks" ANDROID_KEYSTORE_PASSWORD=ci-only-password ANDROID_KEY_ALIAS=ci-test ANDROID_KEY_PASSWORD=ci-only-password gradle :app:assembleRelease
+          APK=app/build/outputs/apk/release/app-release.apk
+          SIGNER=$(find "$ANDROID_HOME/build-tools" -name apksigner -type f | sort -V | tail -1)
+          test -n "$SIGNER"
+          "$SIGNER" verify "$APK"
+          rm "$RUNNER_TEMP/ci-test.jks" "$APK"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: autoclicker-debug-apk
+          path: app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 30
