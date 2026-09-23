@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ctypes
+from dataclasses import replace
 import queue
 import sys
 import threading
@@ -40,7 +41,7 @@ class App:
         self.edit_markers = tk.BooleanVar(value=True)
         self.selected_step: int | None = None
         self._build()
-        self.overlay = MarkerOverlay(root, self._select_step, self.status.set)
+        self.overlay = MarkerOverlay(root, self._select_step, self.status.set, self._move_step)
         try:
             self.scripts = self.store.load()
         except (OSError, ValueError, KeyError, TypeError) as exc:
@@ -92,7 +93,7 @@ class App:
         ttk.Checkbutton(frame, text="Select crosshairs on screen", variable=self.edit_markers,
                         command=self._marker_mode).grid(row=16, column=2, columnspan=2, sticky="w")
         ttk.Label(frame, textvariable=self.status, wraplength=650).grid(row=17, column=0, columnspan=4, sticky="w", pady=(12, 0))
-        ttk.Label(frame, text="Crosshair radius is visual; clicks go to the center pixel. Turn off selection to use other apps while markers remain visible. F9 stops playback.", wraplength=650).grid(row=18, column=0, columnspan=4, sticky="w")
+        ttk.Label(frame, text="Drag a numbered crosshair to move its click position, then save the script. Radius is visual; clicks go to the center pixel. Turn off selection to use other apps. F9 stops playback.", wraplength=650).grid(row=18, column=0, columnspan=4, sticky="w")
         frame.columnconfigure(1, weight=1)
         frame.columnconfigure(3, weight=1)
         frame.rowconfigure(6, weight=1)
@@ -134,6 +135,20 @@ class App:
         selection = self.step_list.curselection()
         if selection:
             self._select_step(selection[0])
+
+    def _move_step(self, index: int, x: int, y: int) -> None:
+        if self.worker and self.worker.is_alive():
+            return
+        try:
+            self.steps[index] = replace(self.steps[index], x=x, y=y)
+        except ValueError as exc:
+            self.overlay.set_steps(self.steps, self.selected_step)
+            self.status.set(f"Cannot move crosshair: {exc}")
+            return
+        self.selected_step = index
+        self._refresh_steps()
+        self._select_step(index)
+        self.status.set(f"Moved crosshair {index + 1} to ({x}, {y}); save the script to keep it")
 
     def _marker_visibility(self) -> None:
         self.overlay.set_visible(self.show_markers.get())

@@ -17,20 +17,24 @@ from .model import Step
 
 
 MAGENTA = "#ff00ff"
+MARKER_OPACITY = 0.65
 
 
 class MarkerOverlay:
     def __init__(self, root: tk.Tk, on_select: Callable[[int], None],
-                 on_error: Callable[[str], None]):
+                 on_error: Callable[[str], None],
+                 on_move: Callable[[int, int, int], None] | None = None):
         self.root = root
         self.on_select = on_select
         self.on_error = on_error
+        self.on_move = on_move
         self.windows: list[tuple[tk.Toplevel, tk.Canvas, int]] = []
         self.steps: list[Step] = []
         self.selected: int | None = None
         self.active: int | None = None
         self.visible = True
         self.editable = True
+        self._drag: tuple[int, int, int, int, int] | None = None
 
     def set_steps(self, steps: list[Step], selected: int | None = None) -> None:
         self.destroy()
@@ -51,7 +55,7 @@ class MarkerOverlay:
                 window.configure(background=MAGENTA)
                 window.attributes("-transparentcolor", MAGENTA)
             else:
-                window.attributes("-alpha", 0.8)
+                window.attributes("-alpha", MARKER_OPACITY)
             window.geometry(f"{size}x{size}+{step.x - center}+{step.y - center}")
             canvas = tk.Canvas(window, width=size, height=size, highlightthickness=0,
                                background=MAGENTA if sys.platform == "win32" else "#152235")
@@ -64,11 +68,57 @@ class MarkerOverlay:
                                width=2, tags="marker")
             canvas.create_text(center, center, text=str(index + 1), fill="white",
                                font=("TkDefaultFont", 12, "bold"), tags="number")
-            canvas.bind("<Button-1>", lambda _event, n=index: self.on_select(n))
+            canvas.bind("<ButtonPress-1>", lambda event, n=index: self._drag_begin(event, n))
+            canvas.bind("<B1-Motion>", lambda event, n=index: self._drag_motion(event, n))
+            canvas.bind("<ButtonRelease-1>", lambda event, n=index: self._drag_end(event, n))
             window.deiconify()
             self.windows.append((window, canvas, index))
         self._colorize()
         self._apply_input_mode()
+        if sys.platform == "win32":
+            for window, _canvas, _index in self.windows:
+                try:
+                    self._set_windows_opacity(window)
+                except OSError as exc:
+                    self.on_error(f"Could not set marker translucency: {exc}")
+
+    def _drag_begin(self, event: tk.Event, index: int) -> None:
+        if not self.editable:
+            return
+        self.on_select(index)
+        step = self.steps[index]
+        self._drag = (index, event.x_root - step.x, event.y_root - step.y,
+                      event.x_root, event.y_root)
+
+    def _drag_motion(self, event: tk.Event, index: int) -> None:
+        if self._drag is None or self._drag[0] != index or not self.editable:
+            return
+        _index, offset_x, offset_y, _start_x, _start_y = self._drag
+        window, _canvas, _ = self.windows[index]
+        center = max(2 * self.steps[index].radius + 10, 38) // 2
+        window.geometry(f"+{event.x_root - offset_x - center}+{event.y_root - offset_y - center}")
+
+    def _drag_end(self, event: tk.Event, index: int) -> None:
+        if self._drag is None or self._drag[0] != index:
+            return
+        _index, offset_x, offset_y, start_x, start_y = self._drag
+        self._drag = None
+        if self.editable and self.on_move and (abs(event.x_root - start_x) >= 3 or
+                                                abs(event.y_root - start_y) >= 3):
+            self.on_move(index, event.x_root - offset_x, event.y_root - offset_y)
+
+    @staticmethod
+    def _set_windows_opacity(window: tk.Toplevel) -> None:
+        """Keep the magenta background invisible while fading the drawn marker."""
+        user32 = ctypes.windll.user32
+        user32.GetParent.argtypes = [ctypes.c_void_p]
+        user32.GetParent.restype = ctypes.c_void_p
+        hwnd = user32.GetParent(window.winfo_id()) or window.winfo_id()
+        setter = user32.SetLayeredWindowAttributes
+        setter.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_ubyte, ctypes.c_uint]
+        setter.restype = ctypes.c_int
+        if not setter(hwnd, 0xFF00FF, round(255 * MARKER_OPACITY), 0x01 | 0x02):
+            raise OSError("SetLayeredWindowAttributes failed")
 
     def set_visible(self, visible: bool) -> None:
         if self.visible != visible:
@@ -164,6 +214,7 @@ class MarkerOverlay:
                 x11.XCloseDisplay(display)
 
     def destroy(self) -> None:
+        self._drag = None
         for window, _canvas, _index in self.windows:
             window.destroy()
         self.windows.clear()
