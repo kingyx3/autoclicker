@@ -47,6 +47,14 @@ class ScriptTests(unittest.TestCase):
             ("click", (1, 2), "L"), ("click", (3, 4), "R"),
         ])
 
+    def test_reports_first_crosshair_and_keeps_click_order(self):
+        mouse = FakeMouse()
+        runner = Runner(mouse, {"left": "L"})
+        script = Script("markers", 1, (Step(5, 6, wait_ms=60), Step(7, 8, wait_ms=0)))
+        selected = []
+        self.assertEqual(runner.run(script, start_delay=0, step_changed=selected.append), 2)
+        self.assertEqual(selected, [0, 1])
+
     def test_stop_releases_held_button(self):
         mouse = FakeMouse()
         runner = Runner(mouse, {"left": "L"})

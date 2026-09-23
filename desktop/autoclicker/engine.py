@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import threading
+import time
 from typing import Callable, Protocol
 
 from .model import Script
@@ -29,15 +30,21 @@ class Runner:
         self.stop_event.clear()
 
     def run(self, script: Script, *, start_delay: float = 3.0,
-            progress: Callable[[int, int], None] | None = None) -> int:
+            progress: Callable[[int, int], None] | None = None,
+            step_changed: Callable[[int], None] | None = None) -> int:
         completed = 0
         total = len(script.steps) * script.repetitions
+        last_highlight = 0.0
         if self.stop_event.wait(start_delay):
             return completed
         for _ in range(script.repetitions):
-            for step in script.steps:
+            for index, step in enumerate(script.steps):
                 if self.stop_event.is_set():
                     return completed
+                now = time.monotonic()
+                if step_changed and (completed == 0 or now - last_highlight >= 0.05):
+                    step_changed(index)
+                    last_highlight = now
                 button = self.buttons[step.button]
                 self.mouse.position = (step.x, step.y)
                 if step.hold_ms == 0:

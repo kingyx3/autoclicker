@@ -9,6 +9,7 @@ from tkinter import messagebox, ttk
 
 from autoclicker.engine import Runner
 from autoclicker.model import Script, ScriptStore, Step
+from autoclicker.overlay import MarkerOverlay
 
 
 class App:
@@ -35,7 +36,11 @@ class App:
         self.wait = tk.StringVar(value="100")
         self.button = tk.StringVar(value="left")
         self.status = tk.StringVar(value="Ready · F8 captures cursor · F9 stops")
+        self.show_markers = tk.BooleanVar(value=True)
+        self.edit_markers = tk.BooleanVar(value=True)
+        self.selected_step: int | None = None
         self._build()
+        self.overlay = MarkerOverlay(root, self._select_step, self.status.set)
         try:
             self.scripts = self.store.load()
         except (OSError, ValueError, KeyError, TypeError) as exc:
@@ -63,10 +68,12 @@ class App:
         ttk.Entry(frame, textvariable=self.name).grid(row=3, column=1, columnspan=3, sticky="ew")
         ttk.Label(frame, text="Repetitions").grid(row=4, column=0, sticky="w")
         ttk.Entry(frame, textvariable=self.repetitions, width=12).grid(row=4, column=1, sticky="w")
-        ttk.Label(frame, text="Steps, in order (select to remove)").grid(row=5, column=0, columnspan=4, sticky="w", pady=(14, 0))
+        ttk.Label(frame, text="Steps, in order (select a row or numbered crosshair to edit)").grid(row=5, column=0, columnspan=4, sticky="w", pady=(14, 0))
         self.step_list = tk.Listbox(frame, height=8, exportselection=False)
         self.step_list.grid(row=6, column=0, columnspan=4, sticky="nsew")
+        self.step_list.bind("<<ListboxSelect>>", self._on_list_select)
         ttk.Button(frame, text="Remove selected step", command=self._remove_step).grid(row=7, column=0, columnspan=2, sticky="ew")
+        ttk.Button(frame, text="Update selected step", command=self._update_step).grid(row=7, column=2, columnspan=2, sticky="ew")
         fields = [("X screen pixel", self.x), ("Y screen pixel", self.y),
                   ("Marker radius (visual)", self.radius), ("Hold ms (0 = quick click)", self.hold),
                   ("Wait after click ms", self.wait)]
@@ -80,8 +87,12 @@ class App:
         ttk.Button(frame, text="Save script", command=self._save).grid(row=15, column=0, columnspan=2, sticky="ew", pady=(12, 0))
         ttk.Button(frame, text="Run in 3 seconds", command=self._start).grid(row=15, column=2, sticky="ew", pady=(12, 0))
         ttk.Button(frame, text="STOP (F9)", command=self._stop).grid(row=15, column=3, sticky="ew", pady=(12, 0))
-        ttk.Label(frame, textvariable=self.status, wraplength=650).grid(row=16, column=0, columnspan=4, sticky="w", pady=(12, 0))
-        ttk.Label(frame, text="The radius labels a target; the OS sends a single mouse click at its center. Keep F9 available while running.", wraplength=650).grid(row=17, column=0, columnspan=4, sticky="w")
+        ttk.Checkbutton(frame, text="Show numbered crosshairs", variable=self.show_markers,
+                        command=self._marker_visibility).grid(row=16, column=0, columnspan=2, sticky="w")
+        ttk.Checkbutton(frame, text="Select crosshairs on screen", variable=self.edit_markers,
+                        command=self._marker_mode).grid(row=16, column=2, columnspan=2, sticky="w")
+        ttk.Label(frame, textvariable=self.status, wraplength=650).grid(row=17, column=0, columnspan=4, sticky="w", pady=(12, 0))
+        ttk.Label(frame, text="Crosshair radius is visual; clicks go to the center pixel. Turn off selection to use other apps while markers remain visible. F9 stops playback.", wraplength=650).grid(row=18, column=0, columnspan=4, sticky="w")
         frame.columnconfigure(1, weight=1)
         frame.columnconfigure(3, weight=1)
         frame.rowconfigure(6, weight=1)
@@ -95,6 +106,61 @@ class App:
         self.step_list.delete(0, tk.END)
         for n, step in enumerate(self.steps, 1):
             self.step_list.insert(tk.END, f"{n}. {step.button} ({step.x}, {step.y})  hold {step.hold_ms} ms  wait {step.wait_ms} ms  radius {step.radius}")
+        if self.selected_step is not None and self.selected_step < len(self.steps):
+            self.step_list.selection_set(self.selected_step)
+        else:
+            self.selected_step = None
+        self.overlay.set_steps(self.steps, self.selected_step)
+
+    def _select_step(self, index: int) -> None:
+        if self.worker and self.worker.is_alive():
+            return
+        if not 0 <= index < len(self.steps):
+            return
+        self.selected_step = index
+        step = self.steps[index]
+        for variable, value in ((self.x, step.x), (self.y, step.y),
+                                (self.radius, step.radius), (self.hold, step.hold_ms),
+                                (self.wait, step.wait_ms)):
+            variable.set(str(value))
+        self.button.set(step.button)
+        self.step_list.selection_clear(0, tk.END)
+        self.step_list.selection_set(index)
+        self.step_list.see(index)
+        self.overlay.select(index)
+        self.status.set(f"Editing crosshair {index + 1}; click Update selected step to apply changes")
+
+    def _on_list_select(self, _event) -> None:
+        selection = self.step_list.curselection()
+        if selection:
+            self._select_step(selection[0])
+
+    def _marker_visibility(self) -> None:
+        self.overlay.set_visible(self.show_markers.get())
+
+    def _marker_mode(self) -> None:
+        if self.worker and self.worker.is_alive() and self.edit_markers.get():
+            self.edit_markers.set(False)
+            self.status.set("Crosshair selection is disabled during playback")
+            return
+        self.overlay.set_editable(self.edit_markers.get())
+
+    def _step_from_fields(self) -> Step:
+        return Step(int(self.x.get()), int(self.y.get()), int(self.radius.get()),
+                    int(self.hold.get()), int(self.wait.get()), self.button.get())
+
+    def _update_step(self) -> None:
+        if self.worker and self.worker.is_alive():
+            return
+        if self.selected_step is None:
+            self.status.set("Select a numbered crosshair or step first")
+            return
+        try:
+            self.steps[self.selected_step] = self._step_from_fields()
+            self._refresh_steps()
+            self.status.set(f"Updated crosshair {self.selected_step + 1}; save the script to keep it")
+        except ValueError as exc:
+            messagebox.showerror("Invalid step", str(exc))
 
     def _selected(self) -> int | None:
         selected = self.saved.curselection()
@@ -108,6 +174,7 @@ class App:
         self.name.set(script.name)
         self.repetitions.set(str(script.repetitions))
         self.steps = list(script.steps)
+        self.selected_step = None
         self._refresh_steps()
 
     def _save(self) -> None:
@@ -137,16 +204,16 @@ class App:
         try:
             if len(self.steps) >= 100:
                 raise ValueError("Maximum 100 steps")
-            self.steps.append(Step(int(self.x.get()), int(self.y.get()), int(self.radius.get()),
-                                   int(self.hold.get()), int(self.wait.get()), self.button.get()))
+            self.steps.append(self._step_from_fields())
+            self.selected_step = len(self.steps) - 1
             self._refresh_steps()
         except ValueError as exc:
             messagebox.showerror("Invalid step", str(exc))
 
     def _remove_step(self) -> None:
-        selection = self.step_list.curselection()
-        if selection:
-            self.steps.pop(selection[0])
+        if self.selected_step is not None:
+            self.steps.pop(self.selected_step)
+            self.selected_step = None
             self._refresh_steps()
 
     def _capture(self) -> None:
@@ -165,11 +232,13 @@ class App:
             messagebox.showerror("Invalid script", str(exc))
             return
         self.runner.reset()
+        self.overlay.set_editable(False)
         self.status.set("Starting in 3 seconds; move to the target window. F9 stops.")
 
         def work() -> None:
             try:
-                count = self.runner.run(script, progress=lambda n, total: self.events.put(("progress", (n, total))))
+                count = self.runner.run(script, progress=lambda n, total: self.events.put(("progress", (n, total))),
+                                        step_changed=lambda index: self.events.put(("step", index)))
                 self.events.put(("done", count))
             except Exception as exc:
                 self.events.put(("error", str(exc)))
@@ -198,15 +267,22 @@ class App:
             elif kind == "progress":
                 done, total = value
                 self.status.set(f"Clicked {done} / {total} · F9 stops")
+            elif kind == "step":
+                self.overlay.highlight(value)
             elif kind == "done":
+                self.overlay.highlight(None)
+                self.overlay.set_editable(self.edit_markers.get())
                 self.status.set(f"Finished or stopped after {value} clicks")
             elif kind == "error":
+                self.overlay.highlight(None)
+                self.overlay.set_editable(self.edit_markers.get())
                 self.status.set(f"Input error: {value}")
         self.root.after(50, self._poll)
 
     def _close(self) -> None:
         self.runner.stop()
         self.listener.stop()
+        self.overlay.destroy()
         self.root.destroy()
 
 
