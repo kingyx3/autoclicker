@@ -44,12 +44,18 @@ class Script:
     name: str
     repetitions: int
     steps: tuple[Step, ...]
+    loop: bool = True
+    time_limit_seconds: int = 0
 
     def __post_init__(self) -> None:
         if not isinstance(self.name, str) or not self.name.strip() or len(self.name) > 100:
             raise ValueError("Name must contain 1–100 characters")
         if type(self.repetitions) is not int or not 1 <= self.repetitions <= 10_000:
             raise ValueError("Repetitions must be 1–10000")
+        if type(self.loop) is not bool:
+            raise ValueError("Loop must be enabled or disabled")
+        if type(self.time_limit_seconds) is not int or not 0 <= self.time_limit_seconds <= 86_400:
+            raise ValueError("Run timer must be 0–86400 seconds")
         if not 1 <= len(self.steps) <= 100 or not all(isinstance(step, Step) for step in self.steps):
             raise ValueError("A script needs 1–100 valid steps")
 
@@ -57,6 +63,8 @@ class Script:
         return {
             "name": self.name,
             "repetitions": self.repetitions,
+            "loop": self.loop,
+            "timeLimitSeconds": self.time_limit_seconds,
             "steps": [{"x": s.x, "y": s.y, "radius": s.radius, "holdMs": s.hold_ms,
                        "waitMs": s.wait_ms, "button": s.button} for s in self.steps],
         }
@@ -65,6 +73,7 @@ class Script:
     def from_dict(cls, obj: dict) -> Script:
         return cls(
             name=obj["name"], repetitions=obj["repetitions"],
+            loop=obj.get("loop", True), time_limit_seconds=obj.get("timeLimitSeconds", 0),
             steps=tuple(Step(x=s["x"], y=s["y"], radius=s.get("radius", 24),
                              hold_ms=s["holdMs"], wait_ms=s["waitMs"],
                              button=s.get("button", "left")) for s in obj["steps"]),
